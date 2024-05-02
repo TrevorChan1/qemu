@@ -1,0 +1,145 @@
+================Test 1================
+Device: e1000
+	Field 'parent_obj': Data differs
+	Field 'io': Data differs
+	Field 'vlan_header': Data differs
+	Field 'vlan': Data differs
+	Field 'vlan_needed': Data differs
+	Field 'cptse': Data differs
+	Field 'props': Data differs
+	Field 'busy': Data differs
+	Field 'mit_timer_on': Data differs
+	Field 'mit_ide': Data differs
+	Field 'compat_flags': Data differs
+	Field 'received_tx_tso': Data differs
+	Field 'use_tso_for_mig': Data differs
+Total # of Fields: 37
+Total # of Differing Fields: 13
+
+Device: passthru
+	Field 'debug': Data differs
+Total # of Fields: 8
+Total # of Differing Fields: 1
+
+Device: esp
+	Field 'parent_obj': Data differs
+	Field 'sbac': Data differs
+Total # of Fields: 6
+Total # of Differing Fields: 2
+
+================Test 2================
+Device: e1000
+	Field 'parent_obj': Data differs
+	Field 'io': Data differs
+	Field 'vlan_header': Data differs
+	Field 'vlan': Data differs
+	Field 'vlan_needed': Data differs
+	Field 'cptse': Data differs
+	Field 'props': Data differs
+	Field 'busy': Data differs
+	Field 'mit_timer_on': Data differs
+	Field 'mit_ide': Data differs
+	Field 'compat_flags': Data differs
+	Field 'received_tx_tso': Data differs
+	Field 'use_tso_for_mig': Data differs
+Total # of Fields: 37
+Total # of Differing Fields: 13
+
+Device: passthru
+	Field 'debug': Data differs
+Total # of Fields: 8
+Total # of Differing Fields: 1
+
+Device: esp
+	Field 'parent_obj': Data differs
+	Field 'sbac': Data differs
+Total # of Fields: 6
+Total # of Differing Fields: 2
+
+================Test 3================
+Device: e1000
+	Field 'parent_obj': Data differs
+	Field 'io': Data differs
+	Field 'vlan_header': Data differs
+	Field 'vlan': Data differs
+	Field 'vlan_needed': Data differs
+	Field 'cptse': Data differs
+	Field 'props': Data differs
+	Field 'busy': Data differs
+	Field 'mit_timer_on': Data differs
+	Field 'mit_ide': Data differs
+	Field 'compat_flags': Data differs
+	Field 'received_tx_tso': Data differs
+	Field 'use_tso_for_mig': Data differs
+Total # of Fields: 37
+Total # of Differing Fields: 13
+
+Device: passthru
+	Field 'debug': Data differs
+Total # of Fields: 8
+Total # of Differing Fields: 1
+
+Device: esp
+	Field 'parent_obj': Data differs
+	Field 'sbac': Data differs
+Total # of Fields: 6
+Total # of Differing Fields: 2
+
+================Test 4================
+Device: e1000
+	Field 'parent_obj': Data differs
+	Field 'io': Data differs
+	Field 'vlan_header': Data differs
+	Field 'vlan': Data differs
+	Field 'vlan_needed': Data differs
+	Field 'cptse': Data differs
+	Field 'props': Data differs
+	Field 'busy': Data differs
+	Field 'mit_timer_on': Data differs
+	Field 'mit_ide': Data differs
+	Field 'compat_flags': Data differs
+	Field 'received_tx_tso': Data differs
+	Field 'use_tso_for_mig': Data differs
+Total # of Fields: 37
+Total # of Differing Fields: 13
+
+Device: passthru
+	Field 'debug': Data differs
+Total # of Fields: 8
+Total # of Differing Fields: 1
+
+Device: esp
+	Field 'parent_obj': Data differs
+	Field 'sbac': Data differs
+Total # of Fields: 6
+Total # of Differing Fields: 2
+
+================Test 5================
+Device: e1000
+	Field 'parent_obj': Data differs
+	Field 'io': Data differs
+	Field 'vlan_header': Data differs
+	Field 'vlan': Data differs
+	Field 'vlan_needed': Data differs
+	Field 'cptse': Data differs
+	Field 'props': Data differs
+	Field 'busy': Data differs
+	Field 'mit_timer_on': Data differs
+	Field 'mit_ide': Data differs
+	Field 'compat_flags': Data differs
+	Field 'received_tx_tso': Data differs
+	Field 'use_tso_for_mig': Data differs
+Total # of Fields: 37
+Total # of Differing Fields: 13
+
+Device: passthru
+	Field 'debug': Data differs
+Total # of Fields: 8
+Total # of Differing Fields: 1
+
+Device: esp
+	Field 'parent_obj': Data differs
+	Field 'sbac': Data differs
+Total # of Fields: 6
+Total # of Differing Fields: 2
+

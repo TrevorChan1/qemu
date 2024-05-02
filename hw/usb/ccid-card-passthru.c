@@ -453,7 +453,7 @@ static const VMStateDescription passthru_vmstate = {
     .pre_save = passthru_pre_save,
     .post_load = passthru_post_load,
     .pre_load = passthru_pre_load,
-    .fields = (VMStateField[]) {
+    .fields = (const VMStateField[]) {
         VMSTATE_BUFFER(vscard_in_data, PassthruState),
         VMSTATE_UINT32(vscard_in_pos, PassthruState),
         VMSTATE_UINT32(vscard_in_hdr, PassthruState),
