@@ -44,6 +44,7 @@
 #include "trace.h"
 #include "qom/object.h"
 
+#include "hw/state-save.h"
 /* #define E1000_DEBUG */
 
 #ifdef E1000_DEBUG
@@ -68,6 +69,8 @@ static int debugflags = DBGBIT(TXERR) | DBGBIT(GENERAL);
 #define PNPMMIO_SIZE      0x20000
 
 #define MAXIMUM_ETHERNET_HDR_LEN (ETH_HLEN + 4)
+
+
 
 /*
  * HW models:
@@ -155,7 +158,22 @@ DECLARE_OBJ_CHECKERS(E1000State, E1000BaseClass,
                      E1000, TYPE_E1000_BASE)
 
 
+// int LLVMFuzzerTestOneInput(const unsigned char *Data, size_t Size)
+// {
+//     /*
+//      * Do the pre-fuzz-initialization before the first fuzzing iteration,
+//      * instead of before the actual fuzz loop. This is needed since libfuzzer
+//      * may fork off additional workers, prior to the fuzzing loop, and if
+//      * pre_fuzz() sets up e.g. shared memory, this should be done for the
+//      * individual worker processes
+//      */
+//     FILE * fp = fopen("GODIHOPETHISWORKS", 'w');
+//     fprintf(fp, "test");
+//     fclose(fp);
+//     return 0;
+// }
 static void
+
 e1000_link_up(E1000State *s)
 {
     e1000x_update_regs_on_link_up(s->mac_reg, s->phy_reg);
@@ -373,7 +391,7 @@ static bool e1000_vet_init_need(void *opaque)
     return chkflag(VET);
 }
 
-static void e1000_reset_hold(Object *obj, ResetType type)
+static void e1000_reset_hold(Object *obj)
 {
     E1000State *d = E1000(obj);
     E1000BaseClass *edc = E1000_GET_CLASS(d);
@@ -1353,6 +1371,8 @@ static bool is_version_1(void *opaque, int version_id)
 static int e1000_pre_save(void *opaque)
 {
     E1000State *s = opaque;
+
+    // Predefined operations
     NetClientState *nc = qemu_get_queue(s->nic);
 
     /*
@@ -1378,12 +1398,119 @@ static int e1000_pre_save(void *opaque)
          */
         s->mig_props = s->tx.tso_props;
     }
+
+    // Initialize the state file
+    FILE ** fp = vmstate_init_statefile((char*) "save_e1000", 37);
+    int offset = sizeof(metadata_header) + 37 * sizeof(metadata_field);
+
+    // Save each vmstate field
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(PCIDevice), 1, (char*) "parent_obj", &s->parent_obj);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(NICState), 1, (char*) "nic", s->nic);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(NICConf), 1, (char*) "conf", &s->conf);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(MemoryRegion), 1, (char*) "mmio", &s->mmio);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(MemoryRegion), 1, (char*) "io", &s->io);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 0x8000, (char*) "mac_reg", s->mac_reg);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint16_t), 0x20, (char*) "phy_reg", s->phy_reg);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint16_t), 64, (char*) "eeprom_data", s->eeprom_data);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 1, (char*) "rxbuf_size", &s->rxbuf_size);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 1, (char*) "rxbuf_min_shift", &s->rxbuf_min_shift);
+
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(unsigned char), 256, (char*) "header", s->tx.header);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(unsigned char), 4, (char*) "vlan_header", s->tx.vlan_header);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(unsigned char), 4, (char*) "vlan", s->tx.vlan);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(unsigned char), 0x10000, (char*) "data", s->tx.data);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint16_t), 1, (char*) "size", &s->tx.size);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(unsigned char), 1, (char*) "vlan_needed", &s->tx.vlan_needed);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(unsigned char), 1, (char*) "sum_needed", &s->tx.sum_needed);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(bool), 1, (char*) "cptse", &s->tx.cptse);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(e1000x_txd_props), 1, (char*) "props", &s->tx.props);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(e1000x_txd_props), 1, (char*) "tso_props", &s->tx.tso_props);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint16_t), 1, (char*) "tso_frames", &s->tx.tso_frames);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(bool), 1, (char*) "busy", &s->tx.busy);
+
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 1, (char*) "val_in", &s->eecd_state.val_in);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint16_t), 1, (char*) "bitnum_in", &s->eecd_state.bitnum_in);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint16_t), 1, (char*) "bitnum_out", &s->eecd_state.bitnum_out);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint16_t), 1, (char*) "reading", &s->eecd_state.reading);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 1, (char*) "old_eecd", &s->eecd_state.old_eecd);
+
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(QEMUTimer), 1, (char*) "autoneg_timer", s->autoneg_timer);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(QEMUTimer), 1, (char*) "mit_timer", s->mit_timer);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(bool), 1, (char*) "mit_timer_on", &s->mit_timer_on);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(bool), 1, (char*) "mit_irq_level", &s->mit_irq_level);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 1, (char*) "mit_ide", &s->mit_ide);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(QEMUTimer), 1, (char*) "flush_q_timer", s->flush_queue_timer);
+
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 1, (char*) "compat_flags", &s->compat_flags);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(bool), 1, (char*) "received_tx_tso", &s->received_tx_tso);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(bool), 1, (char*) "use_tso_for_mig", &s->use_tso_for_migration);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(e1000x_txd_props), 1, (char*) "mig_props", &s->mig_props);
+
+    // Clean up the file pointers used
+    fclose(fp[0]);
+    fclose(fp[1]);
+    free(fp);
+
     return 0;
 }
 
 static int e1000_post_load(void *opaque, int version_id)
 {
     E1000State *s = opaque;
+
+    // Initialize the state file
+    FILE ** fp = vmstate_init_statefile((char*) "load_e1000", 37);
+    int offset = sizeof(metadata_header) + 37 * sizeof(metadata_field);
+
+    // Save each vmstate field
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(PCIDevice), 1, (char*) "parent_obj", &s->parent_obj);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(NICState), 1, (char*) "nic", s->nic);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(NICConf), 1, (char*) "conf", &s->conf);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(MemoryRegion), 1, (char*) "mmio", &s->mmio);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(MemoryRegion), 1, (char*) "io", &s->io);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 0x8000, (char*) "mac_reg", s->mac_reg);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint16_t), 0x20, (char*) "phy_reg", s->phy_reg);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint16_t), 64, (char*) "eeprom_data", s->eeprom_data);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 1, (char*) "rxbuf_size", &s->rxbuf_size);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 1, (char*) "rxbuf_min_shift", &s->rxbuf_min_shift);
+
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(unsigned char), 256, (char*) "header", s->tx.header);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(unsigned char), 4, (char*) "vlan_header", s->tx.vlan_header);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(unsigned char), 4, (char*) "vlan", s->tx.vlan);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(unsigned char), 0x10000, (char*) "data", s->tx.data);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint16_t), 1, (char*) "size", &s->tx.size);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(unsigned char), 1, (char*) "vlan_needed", &s->tx.vlan_needed);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(unsigned char), 1, (char*) "sum_needed", &s->tx.sum_needed);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(bool), 1, (char*) "cptse", &s->tx.cptse);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(e1000x_txd_props), 1, (char*) "props", &s->tx.props);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(e1000x_txd_props), 1, (char*) "tso_props", &s->tx.tso_props);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint16_t), 1, (char*) "tso_frames", &s->tx.tso_frames);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(bool), 1, (char*) "busy", &s->tx.busy);
+
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 1, (char*) "val_in", &s->eecd_state.val_in);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint16_t), 1, (char*) "bitnum_in", &s->eecd_state.bitnum_in);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint16_t), 1, (char*) "bitnum_out", &s->eecd_state.bitnum_out);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint16_t), 1, (char*) "reading", &s->eecd_state.reading);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 1, (char*) "old_eecd", &s->eecd_state.old_eecd);
+
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(QEMUTimer), 1, (char*) "autoneg_timer", s->autoneg_timer);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(QEMUTimer), 1, (char*) "mit_timer", s->mit_timer);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(bool), 1, (char*) "mit_timer_on", &s->mit_timer_on);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(bool), 1, (char*) "mit_irq_level", &s->mit_irq_level);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 1, (char*) "mit_ide", &s->mit_ide);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(QEMUTimer), 1, (char*) "flush_q_timer", s->flush_queue_timer);
+
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 1, (char*) "compat_flags", &s->compat_flags);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(bool), 1, (char*) "received_tx_tso", &s->received_tx_tso);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(bool), 1, (char*) "use_tso_for_mig", &s->use_tso_for_migration);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(e1000x_txd_props), 1, (char*) "mig_props", &s->mig_props);
+
+    // Clean up the file pointers used
+    fclose(fp[0]);
+    fclose(fp[1]);
+    free(fp);
+
+    // Predefined operation
     NetClientState *nc = qemu_get_queue(s->nic);
 
     s->mit_ide = 0;
@@ -1409,6 +1536,92 @@ static int e1000_post_load(void *opaque, int version_id)
          */
         s->tx.tso_props = s->mig_props;
     }
+
+    return 0;
+}
+
+// Before loading the state, randomize all of the values saved to VMStateDescription
+static int e1000_pre_load(void*opaque) {
+    E1000State *s = opaque;
+
+    // Initialize random seed
+    init_rand();
+
+    // Generate n random bytes in the place of each field value
+    // randomize_nbytes(&s->parent_obj, sizeof(PCIDeviceClass), 1); // (BREAKS)
+    // randomize_nbytes(s->nic, sizeof(NICState), 1); // Not in vmsd // (BREAKS)?
+    // randomize_nbytes(&s->conf, sizeof(NICConf), 1); // Not in vmsd // (BREAKS)?
+    // randomize_nbytes(&s->mmio, sizeof(MemoryRegion), 1); // Not in vmsd // (BREAKS)
+    // randomize_nbytes(&s->io, sizeof(MemoryRegion); // Not in vmsd // (BREAKS)
+    randomize_nbytes(&s->rxbuf_size, sizeof(uint32_t), 1);
+    randomize_nbytes(&s->rxbuf_min_shift, sizeof(uint32_t), 1);
+    randomize_nbytes(&s->eecd_state.val_in, sizeof(uint32_t), 1);
+    randomize_nbytes(&s->eecd_state.bitnum_in, sizeof(uint16_t), 1);
+    randomize_nbytes(&s->eecd_state.bitnum_out, sizeof(uint16_t), 1);
+    randomize_nbytes(&s->eecd_state.reading, sizeof(uint16_t), 1);
+    randomize_nbytes(&s->eecd_state.old_eecd, sizeof(uint32_t), 1);
+
+    randomize_nbytes(&s->mig_props.ipcss, sizeof(uint8_t), 1);
+    randomize_nbytes(&s->mig_props.ipcso, sizeof(uint8_t), 1);
+    randomize_nbytes(&s->mig_props.ipcse, sizeof(uint16_t), 1);
+    randomize_nbytes(&s->mig_props.tucss, sizeof(uint8_t), 1);
+    randomize_nbytes(&s->mig_props.tucso, sizeof(uint8_t), 1);
+    randomize_nbytes(&s->mig_props.tucse, sizeof(uint16_t), 1);
+    randomize_nbytes(&s->mig_props.paylen, sizeof(uint32_t), 1);
+    randomize_nbytes(&s->mig_props.hdr_len, sizeof(uint8_t), 1);
+    randomize_nbytes(&s->mig_props.mss, sizeof(uint16_t), 1);
+    randomize_nbytes(&s->mig_props.ip, sizeof(int8_t), 1);
+    randomize_nbytes(&s->mig_props.tcp, sizeof(int8_t), 1);
+
+    randomize_nbytes(&s->tx.size, sizeof(uint16_t), 1);
+    randomize_nbytes(&s->tx.tso_frames, sizeof(uint16_t), 1);
+    randomize_nbytes(&s->tx.sum_needed, sizeof(unsigned char), 1);
+    randomize_nbytes(s->tx.header, sizeof(unsigned char), 256);
+    randomize_nbytes(s->tx.vlan_header, sizeof(unsigned char), 4); // Not in vmsd
+    randomize_nbytes(s->tx.vlan, sizeof(unsigned char), 4); // Not in vmsd
+    randomize_nbytes(&s->tx.vlan_needed, sizeof(unsigned char), 1); // Not in vmsd
+    randomize_nbytes(s->tx.data, sizeof(unsigned char), 0x10000);
+    randomize_nbytes(&s->tx.tso_props.ipcss, sizeof(uint8_t), 1);
+    randomize_nbytes(&s->tx.tso_props.ipcso, sizeof(uint8_t), 1);
+    randomize_nbytes(&s->tx.tso_props.ipcse, sizeof(uint16_t), 1);
+    randomize_nbytes(&s->tx.tso_props.tucss, sizeof(uint8_t), 1);
+    randomize_nbytes(&s->tx.tso_props.tucso, sizeof(uint8_t), 1);
+    randomize_nbytes(&s->tx.tso_props.tucse, sizeof(uint16_t), 1);
+    randomize_nbytes(&s->tx.tso_props.paylen, sizeof(uint32_t), 1);
+    randomize_nbytes(&s->tx.tso_props.hdr_len, sizeof(uint8_t), 1);
+    randomize_nbytes(&s->tx.tso_props.mss, sizeof(uint16_t), 1);
+    randomize_nbytes(&s->tx.tso_props.ip, sizeof(int8_t), 1);
+    randomize_nbytes(&s->tx.tso_props.tcp, sizeof(int8_t), 1);
+    randomize_nbytes(&s->tx.props.ipcss, sizeof(uint8_t), 1); // Not in vmsd
+    randomize_nbytes(&s->tx.props.ipcso, sizeof(uint8_t), 1); // Not in vmsd
+    randomize_nbytes(&s->tx.props.ipcse, sizeof(uint16_t), 1); // Not in vmsd
+    randomize_nbytes(&s->tx.props.tucss, sizeof(uint8_t), 1); // Not in vmsd
+    randomize_nbytes(&s->tx.props.tucso, sizeof(uint8_t), 1); // Not in vmsd
+    randomize_nbytes(&s->tx.props.tucse, sizeof(uint16_t), 1); // Not in vmsd
+    randomize_nbytes(&s->tx.props.paylen, sizeof(uint32_t), 1); // Not in vmsd
+    randomize_nbytes(&s->tx.props.hdr_len, sizeof(uint8_t), 1); // Not in vmsd
+    randomize_nbytes(&s->tx.props.mss, sizeof(uint16_t), 1); // Not in vmsd
+    randomize_nbytes(&s->tx.props.ip, sizeof(int8_t), 1); // Not in vmsd
+    randomize_nbytes(&s->tx.props.tcp, sizeof(int8_t), 1); // Not in vmsd
+    randomize_nbytes(&s->tx.cptse, sizeof(bool), 1); // Not in vmsd
+    randomize_nbytes(&s->tx.busy, sizeof(bool), 1); // Not in vmsd
+
+    randomize_nbytes(s->phy_reg, sizeof(uint16_t), 0x20);
+    randomize_nbytes(s->eeprom_data, sizeof(uint16_t), 64);
+    randomize_nbytes(s->mac_reg, sizeof(uint32_t), 0x8000);
+ 
+    // randomize_nbytes(s->autoneg_timer, sizeof(QEMUTimer), 1); // Not in vmsd // (BREAKS)?
+    // randomize_nbytes(s->mit_timer, sizeof(QEMUTimer), 1); // Not in vmsd // (BREAKS)?
+    randomize_nbytes(&s->mit_timer_on, sizeof(bool), 1); // Not in vmsd
+    randomize_nbytes(&s->mit_irq_level, sizeof(bool), 1);
+    randomize_nbytes(&s->mit_ide, sizeof(uint32_t), 1); // Not in vmsd
+    randomize_nbytes(&s->mit_ide, sizeof(uint32_t), 1); // Not in vmsd
+    // randomize_nbytes(s->flush_queue_timer, sizeof(QEMUTimer), 1); // Not in vmsd // (BREAKS)?
+
+    randomize_nbytes(&s->compat_flags, sizeof(uint32_t), 1); // Not in vmsd
+    randomize_nbytes(&s->received_tx_tso, sizeof(bool), 1); // Not in vmsd
+    randomize_nbytes(&s->use_tso_for_migration, sizeof(bool), 1); // Not in vmsd
+
     return 0;
 }
 
@@ -1437,7 +1650,7 @@ static const VMStateDescription vmstate_e1000_mit_state = {
     .name = "e1000/mit_state",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (const VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32(mac_reg[RDTR], E1000State),
         VMSTATE_UINT32(mac_reg[RADV], E1000State),
         VMSTATE_UINT32(mac_reg[TADV], E1000State),
@@ -1452,7 +1665,7 @@ static const VMStateDescription vmstate_e1000_full_mac_state = {
     .version_id = 1,
     .minimum_version_id = 1,
     .needed = e1000_full_mac_needed,
-    .fields = (const VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32_ARRAY(mac_reg, E1000State, 0x8000),
         VMSTATE_END_OF_LIST()
     }
@@ -1464,7 +1677,7 @@ static const VMStateDescription vmstate_e1000_tx_tso_state = {
     .minimum_version_id = 1,
     .needed = e1000_tso_state_needed,
     .post_load = e1000_tx_tso_post_load,
-    .fields = (const VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT8(tx.tso_props.ipcss, E1000State),
         VMSTATE_UINT8(tx.tso_props.ipcso, E1000State),
         VMSTATE_UINT16(tx.tso_props.ipcse, E1000State),
@@ -1486,7 +1699,8 @@ static const VMStateDescription vmstate_e1000 = {
     .minimum_version_id = 1,
     .pre_save = e1000_pre_save,
     .post_load = e1000_post_load,
-    .fields = (const VMStateField[]) {
+    .pre_load = e1000_pre_load,
+    .fields = (VMStateField[]) {
         VMSTATE_PCI_DEVICE(parent_obj, E1000State),
         VMSTATE_UNUSED_TEST(is_version_1, 4), /* was instance id */
         VMSTATE_UNUSED(4), /* Was mmio_base.  */
@@ -1558,7 +1772,7 @@ static const VMStateDescription vmstate_e1000 = {
                                  E1000_VLAN_FILTER_TBL_SIZE),
         VMSTATE_END_OF_LIST()
     },
-    .subsections = (const VMStateDescription * const []) {
+    .subsections = (const VMStateDescription*[]) {
         &vmstate_e1000_mit_state,
         &vmstate_e1000_full_mac_state,
         &vmstate_e1000_tx_tso_state,
@@ -1666,8 +1880,7 @@ static void pci_e1000_realize(PCIDevice *pci_dev, Error **errp)
                                macaddr);
 
     d->nic = qemu_new_nic(&net_e1000_info, &d->conf,
-                          object_get_typename(OBJECT(d)), dev->id,
-                          &dev->mem_reentrancy_guard, d);
+                          object_get_typename(OBJECT(d)), dev->id, d);
 
     qemu_format_nic_info_str(qemu_get_queue(d->nic), macaddr);
 

@@ -34,6 +34,7 @@
 #include "qemu/log.h"
 #include "qemu/module.h"
 #include "qom/object.h"
+#include "hw/state-save.h"
 
 #define TYPE_AM53C974_DEVICE "am53c974"
 
@@ -77,41 +78,6 @@ struct PCIESPState {
     ESPState esp;
 };
 
-static void esp_pci_update_irq(PCIESPState *pci)
-{
-    int scsi_level = !!(pci->dma_regs[DMA_STAT] & DMA_STAT_SCSIINT);
-    int dma_level = (pci->dma_regs[DMA_CMD] & DMA_CMD_INTE_D) ?
-                    !!(pci->dma_regs[DMA_STAT] & DMA_STAT_DONE) : 0;
-    int level = scsi_level || dma_level;
-
-    pci_set_irq(PCI_DEVICE(pci), level);
-}
-
-static void esp_irq_handler(void *opaque, int irq_num, int level)
-{
-    PCIESPState *pci = PCI_ESP(opaque);
-
-    if (level) {
-        pci->dma_regs[DMA_STAT] |= DMA_STAT_SCSIINT;
-
-        /*
-         * If raising the ESP IRQ to indicate end of DMA transfer, set
-         * DMA_STAT_DONE at the same time. In theory this should be done in
-         * esp_pci_dma_memory_rw(), however there is a delay between setting
-         * DMA_STAT_DONE and the ESP IRQ arriving which is visible to the
-         * guest that can cause confusion e.g. Linux
-         */
-        if ((pci->dma_regs[DMA_CMD] & DMA_CMD_MASK) == 0x3 &&
-            pci->dma_regs[DMA_WBC] == 0) {
-                pci->dma_regs[DMA_STAT] |= DMA_STAT_DONE;
-        }
-    } else {
-        pci->dma_regs[DMA_STAT] &= ~DMA_STAT_SCSIINT;
-    }
-
-    esp_pci_update_irq(pci);
-}
-
 static void esp_pci_handle_idle(PCIESPState *pci, uint32_t val)
 {
     ESPState *s = &pci->esp;
@@ -124,7 +90,6 @@ static void esp_pci_handle_blast(PCIESPState *pci, uint32_t val)
 {
     trace_esp_pci_dma_blast(val);
     qemu_log_mask(LOG_UNIMP, "am53c974: cmd BLAST not implemented\n");
-    pci->dma_regs[DMA_STAT] |= DMA_STAT_BCMBLT;
 }
 
 static void esp_pci_handle_abort(PCIESPState *pci, uint32_t val)
@@ -187,7 +152,6 @@ static void esp_pci_dma_write(PCIESPState *pci, uint32_t saddr, uint32_t val)
             /* clear some bits on write */
             uint32_t mask = DMA_STAT_ERROR | DMA_STAT_ABORT | DMA_STAT_DONE;
             pci->dma_regs[DMA_STAT] &= ~(val & mask);
-            esp_pci_update_irq(pci);
         }
         break;
     default:
@@ -198,14 +162,17 @@ static void esp_pci_dma_write(PCIESPState *pci, uint32_t saddr, uint32_t val)
 
 static uint32_t esp_pci_dma_read(PCIESPState *pci, uint32_t saddr)
 {
+    ESPState *s = &pci->esp;
     uint32_t val;
 
     val = pci->dma_regs[saddr];
     if (saddr == DMA_STAT) {
+        if (s->rregs[ESP_RSTAT] & STAT_INT) {
+            val |= DMA_STAT_SCSIINT;
+        }
         if (!(pci->sbac & SBAC_STATUS)) {
             pci->dma_regs[DMA_STAT] &= ~(DMA_STAT_ERROR | DMA_STAT_ABORT |
                                          DMA_STAT_DONE);
-            esp_pci_update_irq(pci);
         }
     }
 
@@ -309,7 +276,7 @@ static void esp_pci_dma_memory_rw(PCIESPState *pci, uint8_t *buf, int len,
         qemu_log_mask(LOG_UNIMP, "am53c974: MDL transfer not implemented\n");
     }
 
-    addr = pci->dma_regs[DMA_WAC];
+    addr = pci->dma_regs[DMA_SPA];
     if (pci->dma_regs[DMA_WBC] < len) {
         len = pci->dma_regs[DMA_WBC];
     }
@@ -319,6 +286,9 @@ static void esp_pci_dma_memory_rw(PCIESPState *pci, uint8_t *buf, int len,
     /* update status registers */
     pci->dma_regs[DMA_WBC] -= len;
     pci->dma_regs[DMA_WAC] += len;
+    if (pci->dma_regs[DMA_WBC] == 0) {
+        pci->dma_regs[DMA_STAT] |= DMA_STAT_DONE;
+    }
 }
 
 static void esp_pci_dma_memory_read(void *opaque, uint8_t *buf, int len)
@@ -358,13 +328,86 @@ static void esp_pci_hard_reset(DeviceState *dev)
                                | DMA_STAT_ERROR);
     pci->dma_regs[DMA_WMAC] = 0xfffffffd;
 }
+int am_pre_save(void *opaque);
+int am_post_load(void *opaque, int version_id);
+
+int am_pre_save(void *opaque)
+{
+    ESPState *s = ESP(object_resolve_path_component(
+                      OBJECT(opaque), "esp"));
+
+    s->mig_version_id = vmstate_esp.version_id;
+    
+    // Initialize the state file
+    PCIESPState * state = opaque;
+    FILE ** fp = vmstate_init_statefile((char*) "save_esp", 6);
+    int offset = sizeof(metadata_header) + 6 * sizeof(metadata_field);
+
+    // Save each vmstate field
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(PCIDevice), 1, (char*) "parent_obj", &state->parent_obj);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(MemoryRegion), 1, (char*) "io", &state->io);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 8, (char*) "dma_regs", state->dma_regs);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 1, (char*) "sbac", &state->sbac);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint8_t), 1, (char*) "esp_mig_vers_id", &state->esp.mig_version_id);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(ESPState), 1, (char*) "esp", &state->esp);
+
+    // Clean up the file pointers used
+    fclose(fp[0]);
+    fclose(fp[1]);
+    free(fp);
+
+    return 0;
+}
+
+// Before loading the state, randomize all of the values saved to VMStateDescription
+static int am_pre_load(void*opaque) {
+    PCIESPState * state = opaque;
+
+    // Initialize random seed
+    init_rand();
+
+    // Generate n random bytes in the place of each field value
+    // randomize_nbytes(&state->parent_obj, sizeof(PCIDeviceClass), 1); // (BREAKS)
+    // randomize_nbytes(&state->io, sizeof(MemoryRegion), 1); //Not in vmsd // (BREAKS)
+    randomize_nbytes(state->dma_regs, sizeof(uint32_t), 8);
+    randomize_nbytes(&state->sbac, sizeof(uint32_t), 1); //Not in vmsd
+    randomize_nbytes(&state->esp.mig_version_id, sizeof(uint8_t), 1);
+    // randomize_nbytes(&state->esp, sizeof(ESPState), 1); // (BREAKS)
+
+    return 0;
+}
+
+int am_post_load(void *opaque, int version_id)
+{
+    // Initialize the state file
+    PCIESPState * state = opaque;
+    FILE ** fp = vmstate_init_statefile((char*) "load_esp", 6);
+    int offset = sizeof(metadata_header) + 6 * sizeof(metadata_field);
+
+    // Save each vmstate field
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(PCIDevice), 1, (char*) "parent_obj", &state->parent_obj);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(MemoryRegion), 1, (char*) "io", &state->io);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 8, (char*) "dma_regs", state->dma_regs);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 1, (char*) "sbac", &state->sbac);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint8_t), 1, (char*) "esp_mig_vers_id", &state->esp.mig_version_id);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(ESPState), 1, (char*) "esp", &state->esp);
+
+    // Clean up the file pointers used
+    fclose(fp[0]);
+    fclose(fp[1]);
+    free(fp);
+
+    return 0;
+}
 
 static const VMStateDescription vmstate_esp_pci_scsi = {
     .name = "pciespscsi",
     .version_id = 2,
     .minimum_version_id = 1,
-    .pre_save = esp_pre_save,
-    .fields = (const VMStateField[]) {
+    .pre_save = am_pre_save,
+    .post_load = am_post_load,
+    .pre_load = am_pre_load,
+    .fields = (VMStateField[]) {
         VMSTATE_PCI_DEVICE(parent_obj, PCIESPState),
         VMSTATE_BUFFER_UNSAFE(dma_regs, PCIESPState, 0, 8 * sizeof(uint32_t)),
         VMSTATE_UINT8_V(esp.mig_version_id, PCIESPState, 2),
@@ -373,13 +416,23 @@ static const VMStateDescription vmstate_esp_pci_scsi = {
     }
 };
 
+static void esp_pci_command_complete(SCSIRequest *req, size_t resid)
+{
+    ESPState *s = req->hba_private;
+    PCIESPState *pci = container_of(s, PCIESPState, esp);
+
+    esp_command_complete(req, resid);
+    pci->dma_regs[DMA_WBC] = 0;
+    pci->dma_regs[DMA_STAT] |= DMA_STAT_DONE;
+}
+
 static const struct SCSIBusInfo esp_pci_scsi_info = {
     .tcq = false,
     .max_target = ESP_MAX_DEVS,
     .max_lun = 7,
 
     .transfer_data = esp_transfer_data,
-    .complete = esp_command_complete,
+    .complete = esp_pci_command_complete,
     .cancel = esp_request_cancelled,
 };
 
@@ -407,7 +460,7 @@ static void esp_pci_scsi_realize(PCIDevice *dev, Error **errp)
                           "esp-io", 0x80);
 
     pci_register_bar(dev, 0, PCI_BASE_ADDRESS_SPACE_IO, &pci->io);
-    s->irq = qemu_allocate_irq(esp_irq_handler, pci, 0);
+    s->irq = pci_allocate_irq(dev);
 
     scsi_bus_init(&s->bus, sizeof(s->bus), d, &esp_pci_scsi_info);
 }

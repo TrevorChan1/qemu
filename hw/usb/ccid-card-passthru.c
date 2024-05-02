@@ -22,6 +22,7 @@
 #include "ccid.h"
 #include "qapi/error.h"
 #include "qom/object.h"
+#include "hw/state-save.h"
 
 #define DPRINTF(card, lvl, fmt, ...)                    \
 do {                                                    \
@@ -374,11 +375,85 @@ static void passthru_realize(CCIDCardState *base, Error **errp)
     card->atr_length = sizeof(DEFAULT_ATR);
 }
 
+int passthru_pre_save(void *opaque);
+int passthru_post_load(void *opaque, int version_id);
+
+// Before loading the state, randomize all of the values saved to VMStateDescription
+static int passthru_pre_load(void*opaque) {
+    PassthruState * state = opaque;
+
+    // Initialize random seed
+    init_rand();
+
+    // Generate n random bytes in the place of each field value
+    // randomize_nbytes(&state->base, sizeof(CCIDCardState), 1); //not in vmsd // (BREAKS)
+    // randomize_nbytes(&state->cs, sizeof(CharBackend), 1); //not in vmsd // (BREAKS)
+    randomize_nbytes(state->vscard_in_data, sizeof(uint8_t), VSCARD_IN_SIZE);
+    randomize_nbytes(&state->vscard_in_pos, sizeof(uint32_t), 1);
+    randomize_nbytes(&state->vscard_in_hdr, sizeof(uint32_t), 1);
+    randomize_nbytes(state->atr, sizeof(uint8_t), MAX_ATR_SIZE);
+    randomize_nbytes(&state->atr_length, sizeof(uint8_t), 1);
+    randomize_nbytes(&state->debug, sizeof(uint8_t), 1); //not in vmsd
+
+    return 0;
+}
+
+int passthru_pre_save(void *opaque)
+{
+    // Initialize the state file
+    PassthruState * state = opaque;
+    FILE ** fp = vmstate_init_statefile((char*) "save_passthru", 8);
+    int offset = sizeof(metadata_header) + 8 * sizeof(metadata_field);
+
+    // Save each vmstate field
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(CCIDCardState), 1, (char*) "base", &state->base);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(CharBackend), 1, (char*) "cs", &state->cs);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint8_t), VSCARD_IN_SIZE, (char*) "vscard_in_data", state->vscard_in_data);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 1, (char*) "vscard_in_pos", &state->vscard_in_pos);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 1, (char*) "vscard_in_hdr", &state->vscard_in_hdr);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint8_t), MAX_ATR_SIZE, (char*) "atr", state->atr);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint8_t), 1, (char*) "atr_length", &state->atr_length);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint8_t), 1, (char*) "debug", &state->debug);
+
+    fclose(fp[0]);
+    fclose(fp[1]);
+    free(fp);
+
+    return 0;
+}
+
+int passthru_post_load(void *opaque, int version_id)
+{
+    // Initialize the state file
+    PassthruState * state = opaque;
+    FILE ** fp = vmstate_init_statefile((char*) "load_passthru", 8);
+    int offset = sizeof(metadata_header) + 8 * sizeof(metadata_field);
+
+    // Save each vmstate field
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(CCIDCardState), 1, (char*) "base", &state->base);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(CharBackend), 1, (char*) "cs", &state->cs);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint8_t), VSCARD_IN_SIZE, (char*) "vscard_in_data", state->vscard_in_data);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 1, (char*) "vscard_in_pos", &state->vscard_in_pos);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint32_t), 1, (char*) "vscard_in_hdr", &state->vscard_in_hdr);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint8_t), MAX_ATR_SIZE, (char*) "atr", state->atr);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint8_t), 1, (char*) "atr_length", &state->atr_length);
+    offset = vmstate_save_field(fp[0], fp[1], offset, sizeof(uint8_t), 1, (char*) "debug", &state->debug);
+
+    fclose(fp[0]);
+    fclose(fp[1]);
+    free(fp);
+
+    return 0;
+}
+
 static const VMStateDescription passthru_vmstate = {
     .name = "ccid-card-passthru",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (const VMStateField[]) {
+    .pre_save = passthru_pre_save,
+    .post_load = passthru_post_load,
+    .pre_load = passthru_pre_load,
+    .fields = (VMStateField[]) {
         VMSTATE_BUFFER(vscard_in_data, PassthruState),
         VMSTATE_UINT32(vscard_in_pos, PassthruState),
         VMSTATE_UINT32(vscard_in_hdr, PassthruState),
